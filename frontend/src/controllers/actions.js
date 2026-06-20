@@ -1,46 +1,54 @@
-export const UploadImage = (imageSrc, navigate) => {
-    const data = new FormData()
-    data.append("file", imageSrc)
-    console.log(data)
-    fetch("upload", {
-        method: "put",
-        body: data
-    })
-    .then(res => res.json())
-    .then(data => {
-        if (data.error) {
-            console.log("Please add a photograph")
-        }
-        else {
-            navigate("/form", {state : {data}})
-            console.log(data)
-        }
-    })
-    .catch(err => {
-        console.log(err.message)
-    })
-}
+import { apiUrl } from "./api";
+import { compressImage } from "./imageUtils";
 
-export const putForm = (features, currType, currTone, navigate) => {
-    console.log(features, currType, currTone, navigate)
-    fetch("/recommend", {
-        method: "put",
-        headers: {
-            "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ "features": features, "type":currType, "tone":currTone})
-    })
-    .then(res => res.json())
-    .then(data => {
+const REQUEST_TIMEOUT_MS = 120000;
 
-        if (data.error) {
-            console.log("Error")
-        }
-        else {
-            navigate("/recs", {state : {data}})
-            console.log(data)
-        }
-    }).catch(err => {
-        console.log(err)
-    })
-}
+const fetchWithTimeout = (url, options, timeoutMs = REQUEST_TIMEOUT_MS) => {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  return fetch(url, { ...options, signal: controller.signal }).finally(() =>
+    clearTimeout(timeoutId)
+  );
+};
+
+export const UploadImage = async (imageSrc, navigate) => {
+  const compressed = await compressImage(imageSrc);
+  const res = await fetchWithTimeout(apiUrl("/upload"), {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ file: compressed }),
+  });
+
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || `Upload failed (${res.status})`);
+  }
+  if (data.error) {
+    throw new Error(data.error);
+  }
+
+  navigate("/form", { state: { data } });
+};
+
+export const putForm = async (features, currType, currTone, currAcne, navigate) => {
+  const res = await fetchWithTimeout(apiUrl("/recommend"), {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      features,
+      type: currType,
+      tone: currTone,
+      acne: currAcne,
+    }),
+  });
+
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || `Recommendation failed (${res.status})`);
+  }
+  if (data.error) {
+    throw new Error(data.error);
+  }
+
+  navigate("/recs", { state: { data } });
+};

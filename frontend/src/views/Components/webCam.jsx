@@ -1,149 +1,169 @@
 import React, { useRef, useCallback, useState, useEffect } from "react";
 import Webcam from "react-webcam";
-import * as faceapi from 'face-api.js';
+import * as faceapi from "face-api.js";
 
-// MUI
-import Button from '@mui/material/Button';
-import Grid from '@mui/material/Grid';
-import Typography from '@mui/material/Typography';
+import Button from "@mui/material/Button";
+import Grid from "@mui/material/Grid";
+import Typography from "@mui/material/Typography";
 
-function getWindowDimensions() {
-    const { innerWidth: width, innerHeight: height } = window;
-    return {
-        width,
-        height
-    };
-}
+const thresholdPercentFace = 0.2;
+const thresholdFaceScore = 0.5;
 
-const aspectRatio = 4 / 3;
-const thresholdPercentFace = 0.3;
-const thresholdFaceScore = 0.7;
+const WebcamCapture = ({ setImageSrc, onError }) => {
+  const webcamRef = useRef(null);
+  const detectionIntervalRef = useRef(null);
 
-function useWindowDimensions() {
-    const [windowDimensions, setWindowDimensions] = useState(getWindowDimensions());
+  const [modelsReady, setModelsReady] = useState(false);
+  const [modelError, setModelError] = useState(null);
+  const [cameraError, setCameraError] = useState(null);
+  const [faceOK, setFaceOK] = useState("Starting camera...");
 
-    useEffect(() => {
-        function handleResize() {
-            setWindowDimensions(getWindowDimensions());
+  const videoConstraints = {
+    width: { ideal: 640 },
+    height: { ideal: 480 },
+    facingMode: "user",
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadModels = async () => {
+      try {
+        const MODEL_URI = `${process.env.PUBLIC_URL}/models`;
+        await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URI);
+        if (!cancelled) {
+          setModelsReady(true);
+          setFaceOK("Position your face in the frame");
         }
-        window.addEventListener('resize', handleResize);
-        return () => window.removeEventListener('resize', handleResize);
-    }, []);
-
-    return windowDimensions;
-}
-
-const WebcamCapture = ({ setImageSrc, setOnPlay, onPlay }) => {
-    let camHeight = useWindowDimensions().height
-    let camWidth = useWindowDimensions().width
-    if (camHeight > camWidth) {
-        camHeight = Math.round(camWidth * aspectRatio)
-    } else {
-        camHeight = Math.round(camHeight * 0.9)
-        camWidth = Math.round(camHeight / aspectRatio)
-    }
-    const videoConstraints = {
-        height: camHeight,
-        width: camWidth,
-        facingMode: "user"
+      } catch (err) {
+        console.error("Face detection models failed to load:", err);
+        if (!cancelled) {
+          setModelError("Face detection unavailable — you can still capture.");
+          setModelsReady(true);
+          setFaceOK("Ready to capture");
+        }
+      }
     };
 
-    // useEffect( () =>
-    //     {
-    //         console.log(videoConstraints.height)
-    //         console.log(videoConstraints.width)
-    //     }, [videoConstraints.height, videoConstraints.width]
-    // )
-    const webcamRef = useRef(null);
-    const capture = useCallback(
-        () => {
-            const imageSrc = webcamRef.current.getScreenshot();
-            console.log(imageSrc)
-            setImageSrc(imageSrc)
-        }, [webcamRef]
-    );
+    loadModels();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
-    const [initialising, setInitialising] = useState(false)
-    useEffect(() => {
-        const loadModels = async () => {
-            const MODEL_URI = process.env.PUBLIC_URL + '/models';
-            setInitialising(true)
-            Promise.all([
-                faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URI),
-                // faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URI),
-                // faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URI),
-                // faceapi.nets.faceExpressionNet.loadFromUri(MODEL_URI),
-            ]).then(() => { console.log("models imported") });
-        }
-        loadModels();
-    }, [])
+  const stopDetection = () => {
+    if (detectionIntervalRef.current) {
+      clearInterval(detectionIntervalRef.current);
+      detectionIntervalRef.current = null;
+    }
+  };
 
-
-
-    const [faceOK, setFaceOK] = useState(null)
-    const handleVideoOnPlay = () => {
-        setInterval(async () => {
-            if (initialising) {
-                setInitialising(false)
-            }
-            let detections = []
-            if(webcamRef.current !== null)
-                detections = await faceapi.detectAllFaces(webcamRef.current.video, new faceapi.TinyFaceDetectorOptions());
-            if (detections.length > 1) {
-                // Multiple faces
-                setFaceOK("Multiple faces detected")
-            }
-            else if (detections[0] !== undefined) {
-                // One face
-                const boxArea = Math.round(detections[0].box.height) * Math.round(detections[0].box.width)
-                const ImageArea = detections[0].imageWidth * detections[0].imageHeight
-                const percentFace = boxArea / ImageArea
-
-                if (percentFace < thresholdPercentFace) {
-                    // Not close enough
-                    setFaceOK("Come closer")
-                } else if (detections[0].score < thresholdFaceScore) {
-                    // detected face score is low
-                    setFaceOK("Blurry or Not enough lighting")
-                } else {
-                    // all conditions satisfied
-                    setFaceOK("OK")
-                }
-            }
-            else {
-                // No face
-                setFaceOK("no face detected")
-            }
-        }, 500)
+  const startDetection = useCallback(() => {
+    if (modelError || detectionIntervalRef.current) {
+      if (modelError) {
+        setFaceOK("Ready to capture");
+      }
+      return;
     }
 
-    return (
-        <>
-            <Grid item>
-                <Typography variant="h5" component="div" textAlign="center">
-                    {initialising ? "Initialising..." : faceOK}
-                </Typography>
-                <Webcam
-                    id="webcam"
-                    audio={false}
-                    height={videoConstraints.height}
-                    width={videoConstraints.width}
-                    ref={webcamRef}
-                    screenshotFormat="image/jpeg"
-                    videoConstraints={videoConstraints}
-                    onUserMedia={handleVideoOnPlay} />
-            </Grid>
-            <Grid item xs={12}>
-                <Button
-                    onClick={capture}
-                    variant="contained"
-                    disabled={(initialising) || (faceOK !== "OK")}
-                    fullWidth>
-                    Capture photo
-                </Button>
-            </Grid>
-        </>
-    );
+    detectionIntervalRef.current = setInterval(async () => {
+      if (!webcamRef.current?.video) {
+        return;
+      }
+
+      try {
+        const detections = await faceapi.detectAllFaces(
+          webcamRef.current.video,
+          new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.4 })
+        );
+
+        if (detections.length > 1) {
+          setFaceOK("Multiple faces detected");
+        } else if (detections[0]) {
+          const boxArea =
+            Math.round(detections[0].box.height) *
+            Math.round(detections[0].box.width);
+          const imageArea =
+            detections[0].imageWidth * detections[0].imageHeight;
+          const percentFace = boxArea / imageArea;
+
+          if (percentFace < thresholdPercentFace) {
+            setFaceOK("Come closer");
+          } else if (detections[0].score < thresholdFaceScore) {
+            setFaceOK("Improve lighting or hold still");
+          } else {
+            setFaceOK("OK");
+          }
+        } else {
+          setFaceOK("No face detected");
+        }
+      } catch (err) {
+        console.error("Face detection error:", err);
+      }
+    }, 700);
+  }, [modelError]);
+
+  useEffect(() => () => stopDetection(), []);
+
+  const handleUserMedia = () => {
+    setCameraError(null);
+    startDetection();
+  };
+
+  const handleUserMediaError = (err) => {
+    stopDetection();
+    const message =
+      err?.name === "NotAllowedError"
+        ? "Camera permission denied. Allow camera access in your browser settings."
+        : err?.name === "NotFoundError"
+        ? "No camera found on this device."
+        : "Could not open camera. Try uploading a photo instead.";
+    setCameraError(message);
+    setFaceOK(message);
+    onError?.(message);
+  };
+
+  const capture = useCallback(() => {
+    const imageSrc = webcamRef.current?.getScreenshot();
+    if (imageSrc) {
+      stopDetection();
+      setImageSrc(imageSrc);
+    }
+  }, [setImageSrc]);
+
+  const canCapture =
+    modelsReady && !cameraError && (modelError || faceOK === "OK");
+
+  return (
+    <>
+      <Grid item>
+        <Typography variant="h6" component="div" textAlign="center" sx={{ mb: 1 }}>
+          {!modelsReady ? "Loading face detection..." : faceOK}
+        </Typography>
+        <Webcam
+          id="webcam"
+          audio={false}
+          ref={webcamRef}
+          screenshotFormat="image/jpeg"
+          screenshotQuality={0.85}
+          videoConstraints={videoConstraints}
+          onUserMedia={handleUserMedia}
+          onUserMediaError={handleUserMediaError}
+          style={{ width: "100%", borderRadius: 8 }}
+        />
+      </Grid>
+      <Grid item xs={12}>
+        <Button
+          onClick={capture}
+          variant="contained"
+          disabled={!canCapture}
+          fullWidth
+        >
+          Capture photo
+        </Button>
+      </Grid>
+    </>
+  );
 };
 
-export default WebcamCapture
+export default WebcamCapture;
